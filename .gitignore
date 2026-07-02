@@ -1,0 +1,20 @@
+# Secrets
+.env
+
+# Real employee data (PII) - only the dummy employees.xlsx example is tracked
+employees.local.xlsx
+employees.local.csv
+employees.*.local.*
+
+# Runtime state / logs
+sent_log.csv
+*.log
+
+# Dry-run output (local preview emails)
+dry_run_output/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
