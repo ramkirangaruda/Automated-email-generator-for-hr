@@ -25,30 +25,22 @@ This installs `openpyxl` (reads the employee `.xlsx` directly) and
 - To point at a data file somewhere else entirely, set `EMPLOYEES_XLSX` in
   `.env` or the environment to an absolute path.
 
-## 2. Get your SMTP details (from cPanel, not Roundcube)
+## 2. Enable Gmail "Less secure apps" access
 
-Roundcube itself won't show you the raw SMTP host/port - that's set by the
-mail server admin. Since your webmail URL was `webmail.ifocussystec.in/cpsess.../roundcube`,
-your mailbox is cPanel-hosted, so:
+The script uses Gmail's SMTP server (`smtp.gmail.com:587`). By default, Gmail
+blocks less-secure apps, so you need to enable this once:
 
-1. Log into **cPanel** directly (usually `ifocussystec.in/cpanel` or ask whoever
-   set up hosting for the login link).
-2. Go to **Email Accounts**.
-3. Find the sending account (e.g. `hr.support@ifocussystec.com`) and click
-   **Connect Devices** (sometimes labeled "Set Up Mail Client").
-4. It will show **Manual Settings** with something like:
-   - Incoming/Outgoing Server: `mail.ifocussystec.in` (or `ifocussystec.in`)
-   - SMTP Port: `465` (SSL) or `587` (STARTTLS)
-   - Username: the full email address
-   - Password: the mailbox password
-5. Plug the host + port into `.env` (see next step).
+1. Open https://myaccount.google.com/u/0/security
+2. On the left, click **Security**
+3. Scroll down to **"Less secure app access"** and toggle it **ON**
+4. (If you don't see this option, 2-Step Verification may not be enabled; Gmail
+   recommends using App Passwords instead — but for this use case, "Less secure
+   apps" is simpler)
 
-If you don't have cPanel login access, whoever manages hosting/IT can pull
-this in under 2 minutes from that same screen.
+Once enabled, the mailbox password works as-is for SMTP auth.
 
-**You don't need any of this to test the email content** - see "Test without
-SMTP credentials" below. Only fill in `SMTP_PASS` once you actually have
-cPanel access.
+**You don't need to do this yet** — `--dry-run` works without Gmail credentials.
+Only enable this once you're ready to test real delivery.
 
 ## 3. Set credentials via `.env` (never hardcoded, never committed)
 
@@ -56,17 +48,17 @@ cPanel access.
 cp .env.example .env
 ```
 
-Then edit `.env`:
+Then edit `.env` and fill in `SMTP_PASS` with the mailbox password:
 
 ```
-SMTP_HOST=mail.ifocussystec.in
-SMTP_PORT=465
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
 SMTP_USER=hr.support@ifocussystec.com
-SMTP_PASS=the-mailbox-password
+SMTP_PASS=the-gmail-mailbox-password
 ```
 
 `.env` is gitignored - it will never be committed. Leave `SMTP_PASS` blank
-until you have real cPanel credentials; `--dry-run` works without it.
+until you've enabled "Less secure apps"; `--dry-run` works without it.
 
 ## 4. Add the birthday image
 
@@ -106,24 +98,22 @@ python3 send_birthday_emails.py --test-date 2026-07-06
 This actually sends, so only do it once credentials are live and you're
 ready to test end-to-end delivery.
 
-## 6. Schedule it with cPanel Cron Jobs
+## 6. Deploy and schedule (optional)
 
-*(Do this once you have server/cPanel access - not covered further here.)*
+Once you're happy with local testing:
 
-1. Upload this whole folder to the server, including a real `.env` (create
-   it directly on the server - don't upload your local one over an insecure
-   channel).
-2. In cPanel, go to **Cron Jobs**.
-3. Add a new cron job:
-   - **Common Settings:** "Once per day" (or set manually to e.g. 9:00 AM ->
-     Minute: `0`, Hour: `9`, everything else `*`)
-   - **Command:**
-     ```
-     /usr/bin/python3 /home/yourcpaneluser/birthday_automation/send_birthday_emails.py
-     ```
-   - Adjust the path to wherever you actually upload this folder on the server.
-4. Save. It'll now run automatically every day, silently, with no manual
-   Roundcube compose needed.
+1. Upload this repo to your server (any Linux/Unix machine with Python 3.8+).
+2. On the server, create `.env` with the Gmail credentials (never upload your
+   local `.env` — create it fresh on the server for security).
+3. Install dependencies: `pip install -r requirements.txt`
+4. Test it once manually: `python3 send_birthday_emails.py`
+5. Set up a cron job to run it daily:
+   ```bash
+   # crontab -e
+   # Add a line like:
+   0 9 * * * /path/to/repo/send_birthday_emails.py >> /path/to/repo/cron.log 2>&1
+   ```
+   This runs at 9:00 AM every day. Adjust the time as needed.
 
 ## Notes
 
@@ -148,5 +138,8 @@ ready to test end-to-end delivery.
 - `.env`, `sent_log.csv`, `birthday_automation.log`, `dry_run_output/`, and
   `employees.local.xlsx` are all gitignored - only `.env.example` and the
   dummy `employees.xlsx` are meant to be committed.
-- Never paste a real SMTP password into a chat, commit message, or any
-  tracked file. It only ever belongs in the server's `.env`.
+- Never paste a real Gmail password into a chat, commit message, or any
+  tracked file. The password only belongs in the server's `.env` (or locally
+  if you're testing).
+- If you enable "Less secure apps" on the Gmail account, make sure only
+  trusted machines have the `.env` file with credentials.

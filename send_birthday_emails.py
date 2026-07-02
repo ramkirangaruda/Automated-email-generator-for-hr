@@ -12,7 +12,7 @@ USAGE:
     python3 send_birthday_emails.py --dry-run
     python3 send_birthday_emails.py --dry-run --test-date 2026-07-06
 
-Meant to be triggered once a day by a cron job (see README.md for cPanel setup).
+Meant to be triggered once a day by a cron job (see README.md for setup).
 """
 
 import argparse
@@ -37,8 +37,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-SMTP_HOST = os.environ.get("SMTP_HOST", "mail.ifocussystec.in")   # confirm exact host - see README
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))               # 465 = SSL, 587 = STARTTLS
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")         # Gmail SMTP
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))               # 587 = STARTTLS for Gmail
 SMTP_USER = os.environ.get("SMTP_USER", "hr.support@ifocussystec.com")
 SMTP_PASS = os.environ.get("SMTP_PASS")  # set via .env - never hardcode
 
