@@ -5,6 +5,7 @@
 employees.local.xlsx
 employees.local.csv
 employees.*.local.*
+employees.db
 
 # Runtime state / logs
 sent_log.csv

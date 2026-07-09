@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Log in &middot; iFocus HR Portal{% endblock %}
+{% block content %}
+  <div class="login-box">
+    <h1>HR Portal</h1>
+    <p class="muted">Enter the shared portal password to manage employee birthday records.</p>
+    <form method="post">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autofocus required>
+      <button type="submit">Log in</button>
+    </form>
+  </div>
+{% endblock %}

@@ -2,10 +2,11 @@
 """
 Automated Birthday Email Sender for iFocus Systec
 ---------------------------------------------------
-Reads employee data from an .xlsx file (name, email, dob columns), finds
-anyone whose birthday (month + day) matches today, and sends them the HR
-birthday email template via SMTP - with the same cupcake image and
-BCC-to-allemployees behavior seen in the existing manual emails.
+Reads employee data from employees.db (kept up to date via the HR Portal,
+see portal_app.py), finds anyone whose birthday (month + day) matches today,
+and sends them the HR birthday email template via SMTP - with the same
+cupcake image and BCC-to-allemployees behavior seen in the existing manual
+emails.
 
 USAGE:
     python3 send_birthday_emails.py
@@ -26,8 +27,9 @@ from datetime import date
 from email.message import EmailMessage
 from email.utils import formataddr
 
-import openpyxl
 from dotenv import load_dotenv
+
+import employee_store
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -37,23 +39,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")         # Gmail SMTP
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))               # 587 = STARTTLS for Gmail
-SMTP_USER = os.environ.get("SMTP_USER", "hr.support@ifocussystec.com")
-SMTP_PASS = os.environ.get("SMTP_PASS")  # set via .env - never hardcode
+SMTP_HOST = os.environ.get("SMTP_HOST", "mail.ifocussystec.in")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))               # 465 = implicit TLS/SSL
+SMTP_SECURE = os.environ.get("SMTP_SECURE", "true").strip().lower() not in ("false", "0", "")
+SMTP_USER = os.environ.get("SMTP_USER", "itsupport@ifocussystec.com")
+# SMTP_PASSWORD is the current name; SMTP_PASS kept as a fallback for old .env files.
+SMTP_PASS = os.environ.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASS")
 
-FROM_NAME = "HR Support"
-BCC_ADDRESS = "allemployees@ifocussystec.com"
-
-# Real employee data belongs in employees.local.xlsx (gitignored, contains PII).
-# employees.xlsx is the tracked, dummy/example file showing the expected format.
-# Set EMPLOYEES_XLSX to point at a different path if needed.
-_LOCAL_DATA_PATH = os.path.join(BASE_DIR, "employees.local.xlsx")
-_EXAMPLE_DATA_PATH = os.path.join(BASE_DIR, "employees.xlsx")
-EMPLOYEES_PATH = os.environ.get(
-    "EMPLOYEES_XLSX",
-    _LOCAL_DATA_PATH if os.path.exists(_LOCAL_DATA_PATH) else _EXAMPLE_DATA_PATH,
-)
+FROM_NAME = os.environ.get("SMTP_FROM_NAME", "HR Support")
+BCC_ADDRESS = "ramkirangaruda2006@gmail.com"  # TODO: change back to allemployees@ifocussystec.com after testing
 
 LOG_PATH = os.path.join(BASE_DIR, "sent_log.csv")
 RUN_LOG_PATH = os.path.join(BASE_DIR, "birthday_automation.log")
@@ -131,79 +125,6 @@ def resolve_today(test_date_str):
         raise SystemExit(f"--test-date must be in YYYY-MM-DD format, got: {test_date_str!r}")
 
 
-def load_todays_birthdays(xlsx_path, today):
-    """Return list of (name, email) for people whose month/day matches today.
-
-    Skips rows with missing/placeholder emails or malformed dates, logging
-    each skip so nothing fails silently.
-    """
-    if not os.path.exists(xlsx_path):
-        raise SystemExit(f"Employee data file not found: {xlsx_path}")
-
-    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
-    ws = wb.active
-
-    rows = ws.iter_rows(values_only=True)
-    try:
-        header = next(rows)
-    except StopIteration:
-        logger.warning("Employee data file %s is empty.", xlsx_path)
-        return []
-
-    header = [str(h).strip().lower() if h is not None else "" for h in header]
-    try:
-        name_idx = header.index("name")
-        email_idx = header.index("email")
-        dob_idx = header.index("dob")
-    except ValueError:
-        raise SystemExit(
-            f"Employee data file {xlsx_path} must have 'name', 'email', 'dob' columns; "
-            f"found: {header}"
-        )
-
-    matches = []
-    for row_num, row in enumerate(rows, start=2):
-        if row is None or all(cell is None for cell in row):
-            continue
-
-        name = str(row[name_idx]).strip() if row[name_idx] is not None else ""
-        email = str(row[email_idx]).strip() if row[email_idx] is not None else ""
-        dob_raw = row[dob_idx]
-
-        if not name:
-            logger.warning("Row %d skipped: missing name.", row_num)
-            continue
-
-        if not email or "TODO" in email.upper():
-            logger.warning("Row %d (%s) skipped: missing/placeholder email (%r).", row_num, name, email)
-            continue
-
-        dob_date = _parse_dob(dob_raw)
-        if dob_date is None:
-            logger.warning("Row %d (%s) skipped: malformed date (%r).", row_num, name, dob_raw)
-            continue
-
-        if dob_date.month == today.month and dob_date.day == today.day:
-            matches.append((name, email))
-
-    wb.close()
-    return matches
-
-
-def _parse_dob(dob_raw):
-    """Accept either a datetime/date object (openpyxl-parsed) or an ISO string."""
-    if dob_raw is None:
-        return None
-    if isinstance(dob_raw, date):
-        return dob_raw
-    if hasattr(dob_raw, "date"):  # datetime
-        return dob_raw.date()
-    try:
-        return date.fromisoformat(str(dob_raw).strip())
-    except ValueError:
-        return None
-
-
 def already_sent_today(name, today):
     """Check sent_log.csv to avoid double-sending if the cron somehow runs twice."""
     if not os.path.exists(LOG_PATH):
@@ -265,7 +186,7 @@ def send_email(msg):
     delay = SEND_RETRY_BACKOFF
     while True:
         try:
-            if SMTP_PORT == 465:
+            if SMTP_SECURE or SMTP_PORT == 465:
                 with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context, timeout=30) as server:
                     server.login(SMTP_USER, SMTP_PASS)
                     server.send_message(msg)
@@ -299,10 +220,11 @@ def main():
         logger.info("Simulating today as %s.", today.isoformat())
 
     if not args.dry_run and not SMTP_PASS:
-        raise SystemExit("SMTP_PASS is not set. Add it to .env before running (see .env.example).")
+        raise SystemExit("SMTP_PASSWORD is not set. Add it to .env before running (see .env.example).")
 
-    logger.info("Reading employee data from %s", EMPLOYEES_PATH)
-    birthdays = load_todays_birthdays(EMPLOYEES_PATH, today)
+    employee_store.init_db()
+    logger.info("Reading employee data from %s", employee_store.DB_PATH)
+    birthdays = employee_store.get_todays_birthdays(today)
     if not birthdays:
         logger.info("No birthdays today (%s).", today.isoformat())
         return

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Employees &middot; iFocus HR Portal{% endblock %}
+{% block content %}
+
+  <section class="panel">
+    <h2>Bulk upload / export</h2>
+    <div class="row-actions">
+      <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data" class="inline-form">
+        <input type="file" name="file" accept=".xlsx" required>
+        <button type="submit">Upload Excel (.xlsx)</button>
+      </form>
+      <a class="button-link" href="{{ url_for('export') }}">Export current list to Excel</a>
+    </div>
+    <p class="muted">
+      Upload must have <code>name</code>, <code>email</code>, <code>dob</code> (YYYY-MM-DD) columns.
+      Matching is by email: existing employees are updated, new emails are added. Nothing is deleted by upload.
+    </p>
+  </section>
+
+  <section class="panel">
+    <h2>Add employee</h2>
+    <form method="post" action="{{ url_for('add_employee') }}" class="employee-form">
+      <input type="text" name="name" placeholder="Full name" required>
+      <input type="email" name="email" placeholder="Email address" required>
+      <input type="date" name="dob" required>
+      <button type="submit">Add</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Employees ({{ employees|length }})</h2>
+    {% if not employees %}
+      <p class="muted">No employees yet — add one above or upload an Excel file.</p>
+    {% else %}
+      <table class="employee-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Date of birth</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for emp in employees %}
+            <tr>
+              <td>{{ emp.name }}</td>
+              <td>{{ emp.email }}</td>
+              <td>{{ emp.dob }}</td>
+              <td class="actions-cell">
+                <details>
+                  <summary>Edit</summary>
+                  <form method="post" action="{{ url_for('edit_employee', emp_id=emp.id) }}" class="employee-form inline-edit">
+                    <input type="text" name="name" value="{{ emp.name }}" required>
+                    <input type="email" name="email" value="{{ emp.email }}" required>
+                    <input type="date" name="dob" value="{{ emp.dob }}" required>
+                    <button type="submit">Save</button>
+                  </form>
+                </details>
+                <form method="post" action="{{ url_for('delete_employee', emp_id=emp.id) }}"
+                      onsubmit="return confirm('Delete {{ emp.name }}?');" class="inline-form">
+                  <button type="submit" class="danger">Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+
+{% endblock %}

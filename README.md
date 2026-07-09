@@ -1,4 +1,14 @@
-# iFocus Birthday Email Automation - Setup Guide
+# iFocus Birthday Email Automation + HR Portal
+
+Two pieces that share one employee database (`employees.db`, SQLite):
+
+- **`send_birthday_emails.py`** - run daily (cron/Task Scheduler) to email
+  anyone whose birthday is today.
+- **HR Portal** (`portal_app.py` / `run_portal.py`) - a small web page HR
+  opens from her browser (over the office WiFi/LAN) to view, add, edit,
+  delete employees, or bulk-upload an Excel file. Edits she makes are picked
+  up automatically by the next scheduled email run - no code changes, no
+  manually handing you an Excel file.
 
 ## 0. Install dependencies
 
@@ -6,140 +16,185 @@
 pip install -r requirements.txt
 ```
 
-This installs `openpyxl` (reads the employee `.xlsx` directly) and
-`python-dotenv` (loads SMTP credentials from `.env`).
+Installs `openpyxl` (Excel import/export), `python-dotenv` (loads `.env`),
+`Flask` (the portal), and `waitress` (production web server for the portal).
 
-## 1. Set up employee data
+## 1. Employee data lives in `employees.db`
 
-- `employees.xlsx` in this repo is a **dummy example** (fake names/dates) that
-  shows the required format - it's safe to commit and is tracked in git.
-- Real employee data (names + birthdates are PII) must **never** be committed.
-  Put it in **`employees.local.xlsx`** instead - that filename is gitignored,
-  and the script automatically prefers it over `employees.xlsx` when it
-  exists.
-- Required columns (first row = header, any order): `name`, `email`, `dob`.
-  `dob` can be a real Excel date cell or an ISO string (`YYYY-MM-DD`).
-- Rows are skipped automatically (and logged, not silently dropped) if:
-  - the email is blank or contains `TODO` (placeholder), or
-  - the date can't be parsed.
-- To point at a data file somewhere else entirely, set `EMPLOYEES_XLSX` in
-  `.env` or the environment to an absolute path.
+The first time either script runs, it creates `employees.db` next to it and,
+if that DB is brand new, automatically imports whatever it finds in
+`employees.local.xlsx` (falling back to the dummy `employees.xlsx`) so no
+existing data is lost in the switch to a database.
 
-## 2. Enable Gmail "Less secure apps" access
+From then on, **`employees.db` is the source of truth** - edit employee data
+through the HR Portal (below), not by hand-editing Excel files. Excel is now
+just an import/export format:
 
-The script uses Gmail's SMTP server (`smtp.gmail.com:587`). By default, Gmail
-blocks less-secure apps, so you need to enable this once:
+- **Upload** an `.xlsx` in the portal to bulk-add or bulk-update employees.
+  Required columns (header row, any order): `name`, `email`, `dob`
+  (`YYYY-MM-DD` or a real Excel date cell). Matching is by email - existing
+  employees are updated, new emails are added, nothing is ever deleted by an
+  upload.
+- **Export** downloads the current database as an `.xlsx`, e.g. for a backup
+  or to hand off to payroll.
 
-1. Open https://myaccount.google.com/u/0/security
-2. On the left, click **Security**
-3. Scroll down to **"Less secure app access"** and toggle it **ON**
-4. (If you don't see this option, 2-Step Verification may not be enabled; Gmail
-   recommends using App Passwords instead — but for this use case, "Less secure
-   apps" is simpler)
+`employees.db` contains real PII and is gitignored - never commit it.
 
-Once enabled, the mailbox password works as-is for SMTP auth.
-
-**You don't need to do this yet** — `--dry-run` works without Gmail credentials.
-Only enable this once you're ready to test real delivery.
-
-## 3. Set credentials via `.env` (never hardcoded, never committed)
+## 2. Configure SMTP and the portal password
 
 ```bash
 cp .env.example .env
 ```
 
-Then edit `.env` and fill in `SMTP_PASS` with the mailbox password:
+Edit `.env`:
 
 ```
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=hr.support@ifocussystec.com
-SMTP_PASS=the-gmail-mailbox-password
+SMTP_HOST=mail.ifocussystec.in
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=itsupport@ifocussystec.com
+SMTP_PASSWORD=the-real-mailbox-password
+SMTP_FROM_NAME=HR Support
+
+PORTAL_PASSWORD=pick-a-shared-password-for-hr
+SECRET_KEY=generate-with-the-command-below
 ```
 
-`.env` is gitignored - it will never be committed. Leave `SMTP_PASS` blank
-until you've enabled "Less secure apps"; `--dry-run` works without it.
+Generate a `SECRET_KEY` once and keep it stable (changing it logs everyone
+out of the portal):
 
-## 4. Add the birthday image
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+`.env` is gitignored - it will never be committed. `--dry-run` on the email
+script works without `SMTP_PASSWORD` set at all.
+
+**`PORTAL_PASSWORD` is the only thing standing between "on the office WiFi"
+and "can view/edit every employee's name, email and birthdate."** Set it to
+something real before telling HR the portal's address, and only share it
+with her directly (not over the same channel as the URL).
+
+## 3. Run the HR Portal
+
+**Local testing** (just on your own machine):
+
+```bash
+python portal_app.py
+```
+
+Open http://localhost:5000, log in with `PORTAL_PASSWORD`.
+
+**Always-on hosting on the LAN** (so HR can reach it any time, not just when
+your laptop happens to be open): run `run_portal.py` on whatever machine is
+meant to stay on - server, NAS, an old desktop left running, etc. It uses
+`waitress` (a proper production server, unlike Flask's built-in dev server)
+and binds to all network interfaces:
+
+```bash
+python run_portal.py
+```
+
+It prints the LAN URL to use, e.g. `http://192.168.1.42:5000`. Anyone on the
+same WiFi/LAN can open that URL from a laptop or phone browser and log in
+with `PORTAL_PASSWORD`.
+
+To keep it running permanently in the background:
+
+- **Windows** - use Task Scheduler: create a task that runs
+  `pythonw.exe run_portal.py` at system startup, or install it as a proper
+  Windows service with [NSSM](https://nssm.cc/) (`nssm install HRPortal
+  "C:\path\to\python.exe" "C:\path\to\run_portal.py"`).
+- **Linux/NAS with systemd** - create `/etc/systemd/system/hr-portal.service`:
+  ```ini
+  [Unit]
+  Description=iFocus HR Portal
+  After=network.target
+
+  [Service]
+  WorkingDirectory=/path/to/email-automater
+  ExecStart=/usr/bin/python3 run_portal.py
+  Restart=on-failure
+
+  [Install]
+  WantedBy=multi-user.target
+  ```
+  Then `sudo systemctl enable --now hr-portal`.
+
+**Firewall:** whichever machine hosts the portal needs to allow inbound
+connections on port 5000 from the local network (Windows Defender Firewall
+will prompt the first time you run it - allow it for "Private" networks
+only, not "Public").
+
+## 4. Run the birthday email sender
+
+```bash
+python send_birthday_emails.py
+python send_birthday_emails.py --dry-run
+python send_birthday_emails.py --dry-run --test-date 2026-07-06
+```
+
+`--dry-run` builds the full email - including the embedded cupcake image -
+and writes it to `dry_run_output/<date>_<name>.eml` instead of sending
+anything over SMTP. Open the `.eml` in Outlook/Thunderbird/Mail (or drag it
+into Gmail) to preview exactly what a recipient would see.
+
+Since nobody's birthday is likely to be today, combine with `--test-date` to
+simulate any date without touching real data.
+
+### Schedule it daily
+
+**Windows (Task Scheduler):**
+Create a daily trigger (e.g. 9:00 AM) that runs:
+```
+C:\path\to\python.exe C:\path\to\send_birthday_emails.py
+```
+
+**Linux/NAS (cron):**
+```bash
+# crontab -e
+0 9 * * * /usr/bin/python3 /path/to/send_birthday_emails.py >> /path/to/cron.log 2>&1
+```
+
+If the portal is hosted on the same always-on machine, it makes sense to
+schedule the email sender there too, so it always sees HR's latest edits.
+
+## 5. Add the birthday image
 
 The cupcake graphic (`360_F_294637909_957UbRCZ8umRl6c6YzAcR78nAakfgSxf.jpg`)
 is already in this repo and embedded inline in every email automatically.
-If you ever need to swap it, update `IMAGE_PATH` in
-`send_birthday_emails.py`.
-
-## 5. Test without SMTP credentials (`--dry-run` and `--test-date`)
-
-Before you have cPanel access (or any time you want to sanity-check the
-template), use `--dry-run`. It builds the full email - including the
-embedded cupcake image - and writes it to `dry_run_output/<date>_<name>.eml`
-instead of sending anything over SMTP.
-
-```bash
-python3 send_birthday_emails.py --dry-run
-```
-
-Since nobody's birthday is likely to be today, combine it with `--test-date`
-to simulate any date without touching your data file:
-
-```bash
-python3 send_birthday_emails.py --dry-run --test-date 2026-07-06
-```
-
-Open the resulting `.eml` file in Outlook/Thunderbird/Mail (or drag it into
-Gmail) to see exactly what recipients would receive, image included.
-
-Once you're happy with how it looks, run a **real dry run against real SMTP**
-the same way, minus `--dry-run`, once `.env` has a real `SMTP_PASS`:
-
-```bash
-python3 send_birthday_emails.py --test-date 2026-07-06
-```
-
-This actually sends, so only do it once credentials are live and you're
-ready to test end-to-end delivery.
-
-## 6. Deploy and schedule (optional)
-
-Once you're happy with local testing:
-
-1. Upload this repo to your server (any Linux/Unix machine with Python 3.8+).
-2. On the server, create `.env` with the Gmail credentials (never upload your
-   local `.env` — create it fresh on the server for security).
-3. Install dependencies: `pip install -r requirements.txt`
-4. Test it once manually: `python3 send_birthday_emails.py`
-5. Set up a cron job to run it daily:
-   ```bash
-   # crontab -e
-   # Add a line like:
-   0 9 * * * /path/to/repo/send_birthday_emails.py >> /path/to/repo/cron.log 2>&1
-   ```
-   This runs at 9:00 AM every day. Adjust the time as needed.
+To swap it, update `IMAGE_PATH` in `send_birthday_emails.py`.
 
 ## Notes
 
-- **Logging:** every run writes to `birthday_automation.log` (gitignored) in
-  addition to stdout, so after an unattended cron run you can check exactly
-  what happened - who got emailed, who got skipped and why, any SMTP errors.
-- **Duplicate prevention:** `sent_log.csv` (gitignored) is created
-  automatically and prevents duplicate sends if the cron somehow runs twice
-  in one day. It works the same way whether the underlying data source is
-  `employees.xlsx` or `employees.local.xlsx`.
+- **Logging:** every email run writes to `birthday_automation.log`
+  (gitignored) in addition to stdout - who got emailed, who got skipped and
+  why, any SMTP errors.
+- **Duplicate prevention:** `sent_log.csv` (gitignored) prevents duplicate
+  sends if the scheduler somehow runs twice in one day.
 - **Retries:** SMTP sends automatically retry up to 2 times with exponential
-  backoff (5s, then 10s) if the mail server is briefly unreachable, before
-  being logged as a failure.
-- BCC is currently set to `allemployees@ifocussystec.com`, matching what you're
-  already doing manually - change `BCC_ADDRESS` in the script if that should differ.
-- The image is embedded directly in the email (not remote-linked), so
-  recipients won't see the "remote resources blocked" warning you saw in
-  Roundcube.
+  backoff (5s, then 10s) before being logged as a failure.
+- BCC is currently set to `ramkirangaruda2006@gmail.com` for testing -
+  change `BCC_ADDRESS` in `send_birthday_emails.py` back to
+  `allemployees@ifocussystec.com` before going live.
+- The birthday image is embedded directly in the email (not remote-linked),
+  so recipients won't see a "remote resources blocked" warning.
+- Rows are skipped automatically (and reported, never silently dropped) on
+  Excel import if the email is blank, contains `TODO`, isn't a valid email
+  format, or the date can't be parsed.
 
 ## Security
 
-- `.env`, `sent_log.csv`, `birthday_automation.log`, `dry_run_output/`, and
-  `employees.local.xlsx` are all gitignored - only `.env.example` and the
-  dummy `employees.xlsx` are meant to be committed.
-- Never paste a real Gmail password into a chat, commit message, or any
-  tracked file. The password only belongs in the server's `.env` (or locally
-  if you're testing).
-- If you enable "Less secure apps" on the Gmail account, make sure only
-  trusted machines have the `.env` file with credentials.
+- `.env`, `employees.db`, `sent_log.csv`, `birthday_automation.log`, and
+  `dry_run_output/` are all gitignored - only `.env.example` and the dummy
+  `employees.xlsx` are meant to be committed.
+- Never paste the real SMTP password or `PORTAL_PASSWORD` into a chat,
+  commit message, or any tracked file.
+- The portal has no per-user accounts - it's one shared password gating
+  everyone who can reach it on the LAN. Treat `PORTAL_PASSWORD` like a
+  mailbox password: share it verbally/directly with HR, not by email or in
+  a shared doc next to the portal's URL.
+- The portal is designed for **LAN-only** access (office WiFi). Don't port-
+  forward it to the public internet without adding real authentication and
+  HTTPS first - a single shared password over plain HTTP is fine on a
+  trusted internal network, not on the open internet.
