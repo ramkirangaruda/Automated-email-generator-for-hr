@@ -12,8 +12,12 @@ USAGE:
     python3 send_birthday_emails.py
     python3 send_birthday_emails.py --dry-run
     python3 send_birthday_emails.py --dry-run --test-date 2026-07-06
+    python3 send_birthday_emails.py --loop              # run forever, checks daily at 09:00
+    python3 send_birthday_emails.py --loop --loop-hour 8 # run forever, checks daily at 08:00
 
-Meant to be triggered once a day by a cron job (see README.md for setup).
+Either run once via a cron job/Task Scheduler (see README.md), or start it
+once with --loop and leave the process running - it checks for birthdays
+once a day and sleeps in between.
 """
 
 import argparse
@@ -23,7 +27,7 @@ import os
 import smtplib
 import ssl
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from email.message import EmailMessage
 from email.utils import formataddr
 
@@ -112,6 +116,20 @@ def parse_args():
         "--test-date",
         metavar="YYYY-MM-DD",
         help="Pretend today is this date, instead of using the real current date.",
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Run forever: check for birthdays once a day instead of exiting "
+        "after one run. Use this instead of a cron/Task Scheduler job - just "
+        "start it once (e.g. in the background) and leave it running.",
+    )
+    parser.add_argument(
+        "--loop-hour",
+        type=int,
+        default=9,
+        metavar="HOUR",
+        help="Hour of the day (0-23, local time) to send at when --loop is used. Default: 9.",
     )
     return parser.parse_args()
 
@@ -208,20 +226,8 @@ def send_email(msg):
             delay *= 2
 
 
-def main():
-    args = parse_args()
-    setup_logging()
-
-    today = resolve_today(args.test_date)
-
-    if args.dry_run:
-        logger.info("Running in --dry-run mode (no emails will be sent).")
-    if args.test_date:
-        logger.info("Simulating today as %s.", today.isoformat())
-
-    if not args.dry_run and not SMTP_PASS:
-        raise SystemExit("SMTP_PASSWORD is not set. Add it to .env before running (see .env.example).")
-
+def check_and_send(today, dry_run):
+    """Look up today's birthdays and send (or dry-run save) each one."""
     employee_store.init_db()
     logger.info("Reading employee data from %s", employee_store.DB_PATH)
     birthdays = employee_store.get_todays_birthdays(today)
@@ -236,7 +242,7 @@ def main():
 
         msg = build_message(name, email)
 
-        if args.dry_run:
+        if dry_run:
             save_dry_run(msg, name, today)
             continue
 
@@ -246,6 +252,53 @@ def main():
             logger.info("Sent birthday email to %s <%s>", name, email)
         except Exception as e:
             logger.error("FAILED to send to %s <%s>: %s", name, email, e)
+
+
+def seconds_until_next_run(loop_hour, now=None):
+    now = now or datetime.now()
+    target = now.replace(hour=loop_hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+def run_loop(loop_hour, dry_run):
+    logger.info(
+        "Starting in --loop mode: will check for birthdays once a day at %02d:00. "
+        "Leave this process running instead of using cron/Task Scheduler.",
+        loop_hour,
+    )
+    while True:
+        try:
+            check_and_send(date.today(), dry_run)
+        except Exception:
+            logger.exception("Unexpected error during daily birthday check - will retry tomorrow.")
+
+        wait_seconds = seconds_until_next_run(loop_hour)
+        logger.info("Next check in %.1f hours (around %02d:00).", wait_seconds / 3600, loop_hour)
+        time.sleep(wait_seconds)
+
+
+def main():
+    args = parse_args()
+    setup_logging()
+
+    if args.dry_run:
+        logger.info("Running in --dry-run mode (no emails will be sent).")
+
+    if not args.dry_run and not SMTP_PASS:
+        raise SystemExit("SMTP_PASSWORD is not set. Add it to .env before running (see .env.example).")
+
+    if args.loop:
+        if not 0 <= args.loop_hour <= 23:
+            raise SystemExit("--loop-hour must be between 0 and 23.")
+        run_loop(args.loop_hour, args.dry_run)
+        return
+
+    today = resolve_today(args.test_date)
+    if args.test_date:
+        logger.info("Simulating today as %s.", today.isoformat())
+    check_and_send(today, args.dry_run)
 
 
 if __name__ == "__main__":

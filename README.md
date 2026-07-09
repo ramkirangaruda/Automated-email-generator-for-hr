@@ -159,6 +159,18 @@ C:\path\to\python.exe C:\path\to\send_birthday_emails.py
 If the portal is hosted on the same always-on machine, it makes sense to
 schedule the email sender there too, so it always sees HR's latest edits.
 
+**Alternative: `--loop` (no cron/Task Scheduler needed).**
+Instead of a separate scheduled job, start the script once with `--loop` and
+leave the process running - it checks for birthdays once a day (09:00 by
+default) and sleeps in between:
+```bash
+python send_birthday_emails.py --loop
+python send_birthday_emails.py --loop --loop-hour 8   # check at 08:00 instead
+```
+On Windows, run it with `pythonw.exe` (no console window) and add it to your
+Startup folder, or wrap it the same way as `run_portal.py` above (Task
+Scheduler "at startup", or NSSM as a service) so it survives reboots.
+
 ## 5. Add the birthday image
 
 The cupcake graphic (`360_F_294637909_957UbRCZ8umRl6c6YzAcR78nAakfgSxf.jpg`)
